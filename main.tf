@@ -14,7 +14,7 @@ data "aws_ami" "amazon_linux" {
 
 }
 
-resource "aws_vpc" "asg_example_vpc" {
+resource "aws_vpc" "asg_vpc" {
   cidr_block = "10.0.0.0/16"
   tags = {
     Name = "asg-vpc"
@@ -22,7 +22,7 @@ resource "aws_vpc" "asg_example_vpc" {
 }
 
 resource "aws_subnet" "subnet1" {
-  vpc_id            = aws_vpc.asg_example_vpc.id
+  vpc_id            = aws_vpc.asg_vpc.id
   cidr_block        = "10.0.1.0/24"
   availability_zone = "ap-south-1a"
   tags = {
@@ -31,7 +31,7 @@ resource "aws_subnet" "subnet1" {
 }
 
 resource "aws_subnet" "subnet2" {
-  vpc_id            = aws_vpc.asg_example_vpc.id
+  vpc_id            = aws_vpc.asg_vpc.id
   cidr_block        = "10.0.3.0/24"
   availability_zone = "ap-south-1b"
   tags = {
@@ -43,7 +43,7 @@ resource "aws_subnet" "subnet2" {
 
 # Create and attach an Internet Gateway to the VPC
 resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.asg_example_vpc.id
+  vpc_id = aws_vpc.asg_vpc.id
 
   tags = {
     Name = "asg-igw"
@@ -52,7 +52,7 @@ resource "aws_internet_gateway" "igw" {
 
 # Create a route table for the VPC and add a default route to the Internet Gateway
 resource "aws_route_table" "route_table" {
-  vpc_id = aws_vpc.asg_example_vpc.id
+  vpc_id = aws_vpc.asg_vpc.id
 
   route {
     cidr_block = "0.0.0.0/0"
@@ -75,8 +75,8 @@ resource "aws_route_table_association" "subnet2_association" {
   route_table_id = aws_route_table.route_table.id
 }
 
-resource "aws_security_group" "example" {
-  vpc_id = aws_vpc.asg_example_vpc.id
+resource "aws_security_group" "sg" {
+  vpc_id = aws_vpc.asg_vpc.id
 
   ingress {
     from_port   = 22
@@ -105,15 +105,15 @@ resource "aws_security_group" "example" {
 }
 
 # Define a Launch Template
-resource "aws_launch_template" "example" {
-  name_prefix   = "example"
+resource "aws_launch_template" "asg" {
+  name_prefix   = "asg"
   image_id      = data.aws_ami.amazon_linux.id
   instance_type = var.instance_type
   user_data     = filebase64("install_script.sh")
   
   network_interfaces {
     associate_public_ip_address = true
-    security_groups             = [aws_security_group.example.id]
+    security_groups             = [aws_security_group.sg.id]
   }
 
   tags = {
@@ -122,21 +122,21 @@ resource "aws_launch_template" "example" {
 }
 
 # Load Balancer
-resource "aws_lb" "example" {
-  name               = "example-lb"
+resource "aws_lb" "asg-lb" {
+  name               = "asg-lb"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.example.id]
+  security_groups    = [aws_security_group.sg.id]
   subnets            = [aws_subnet.subnet1.id,aws_subnet.subnet2.id]
 
   enable_deletion_protection = false
 }
 
-resource "aws_lb_target_group" "example" {
-  name     = "example-tg"
+resource "aws_lb_target_group" "asg" {
+  name     = "asg-tg"
   port     = 80
   protocol = "HTTP"
-  vpc_id   = aws_vpc.asg_example_vpc.id
+  vpc_id   = aws_vpc.asg_vpc.id
 
   health_check {
     path                = "/"
@@ -147,40 +147,40 @@ resource "aws_lb_target_group" "example" {
   }
 }
 
-resource "aws_lb_listener" "example" {
-  load_balancer_arn = aws_lb.example.arn
+resource "aws_lb_listener" "lb_listener" {
+  load_balancer_arn = aws_lb.asg-lb.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.example.arn
+    target_group_arn = aws_lb_target_group.asg.arn
   }
 }
 
 # Auto Scaling Group
-resource "aws_autoscaling_group" "example" {
+resource "aws_autoscaling_group" "asg" {
   desired_capacity     = var.desired_capacity
   max_size             = var.max_size
   min_size             = var.min_size
   vpc_zone_identifier  = [aws_subnet.subnet1.id]
 
   launch_template {
-    id      = aws_launch_template.example.id
+    id      = aws_launch_template.asg.id
     version = "$Latest"
   }
 
-  target_group_arns = [aws_lb_target_group.example.arn]
+  target_group_arns = [aws_lb_target_group.asg.arn]
 
   tag {
     key                 = "Name"
-    value               = "example-asg"
+    value               = "tf-asg"
     propagate_at_launch = true
   }
 }
 
 # Auto Scaling Group attachment to Load Balancer
 resource "aws_autoscaling_attachment" "asg_attachment" {
-  autoscaling_group_name = aws_autoscaling_group.example.name
-  lb_target_group_arn    = aws_lb_target_group.example.arn
+  autoscaling_group_name = aws_autoscaling_group.asg.name
+  lb_target_group_arn    = aws_lb_target_group.asg.arn
 }
